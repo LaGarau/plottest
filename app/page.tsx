@@ -5,29 +5,36 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 
 // FIREBASE IMPORTS
 import { rtdb } from '../lib/firebase'; 
-import { ref, push, set, onChildAdded } from 'firebase/database'; 
+import { ref, push, onChildAdded } from 'firebase/database'; 
 
 export default function GhumanteCommunityMap() {
-  const mapContainer = useRef(null);
-  const mapInstance = useRef(null);
+  // --- TYPE FIXES HERE ---
+  const mapContainer = useRef<HTMLDivElement | null>(null);
+  const mapInstance = useRef<maplibregl.Map | null>(null);
   
   const [isLoaded, setIsLoaded] = useState(false);
   const [capturedCount, setCapturedCount] = useState(0);
   
   const GRID_SIZE = 0.0002; 
-  const capturedCells = useRef({ type: 'FeatureCollection', features: [] });
-  const visitedCellIds = useRef(new Set());
+  // Defined GeoJSON type to help TypeScript
+  const capturedCells = useRef<GeoJSON.FeatureCollection>({ type: 'FeatureCollection', features: [] });
+  const visitedCellIds = useRef(new Set<string>());
 
   // --- 1. INITIALIZE MAP ---
   useEffect(() => {
+    // Only initialize the map if it doesn't exist and the container is ready
+    if (mapInstance.current || !mapContainer.current) return;
+
     mapInstance.current = new maplibregl.Map({
-      container: mapContainer.current!,
+      container: mapContainer.current,
       style: 'https://tiles.openfreemap.org/styles/liberty', 
       center: [85.3072, 27.7042],
       zoom: 17,
     });
 
     mapInstance.current.on('load', () => {
+      if (!mapInstance.current) return;
+
       mapInstance.current.addSource('grid-source', {
         type: 'geojson',
         data: capturedCells.current
@@ -45,22 +52,26 @@ export default function GhumanteCommunityMap() {
       });
       setIsLoaded(true);
     });
+
+    // Cleanup on unmount
+    return () => {
+      mapInstance.current?.remove();
+      mapInstance.current = null;
+    };
   }, []);
 
   // --- 2. LISTEN TO COMMUNITY DATA ---
   useEffect(() => {
-    if (!isLoaded) return;
+    if (!isLoaded || !mapInstance.current) return;
 
     const communityRef = ref(rtdb, 'community_grid');
 
-    // This triggers for EVERY existing cell AND every NEW cell added by others
     return onChildAdded(communityRef, (snapshot) => {
       const data = snapshot.val();
       if (!data) return;
 
       const { lng, lat, color, cellId } = data;
 
-      // Only add to map if we haven't drawn it yet
       if (!visitedCellIds.current.has(cellId)) {
         visitedCellIds.current.add(cellId);
         
@@ -80,9 +91,10 @@ export default function GhumanteCommunityMap() {
           }
         });
 
-        // Update the map visuals
-        const source: any = mapInstance.current?.getSource('grid-source');
-        if (source) source.setData(capturedCells.current);
+        const source = mapInstance.current?.getSource('grid-source') as maplibregl.GeoJSONSource;
+        if (source) {
+          source.setData(capturedCells.current);
+        }
         setCapturedCount(visitedCellIds.current.size);
       }
     });
@@ -96,7 +108,6 @@ export default function GhumanteCommunityMap() {
       const { longitude, latitude } = position.coords;
       const cellId = `${Math.floor(longitude/GRID_SIZE)}_${Math.floor(latitude/GRID_SIZE)}`;
 
-      // If player enters a NEW cell, tell the community!
       if (!visitedCellIds.current.has(cellId)) {
         const communityRef = ref(rtdb, 'community_grid');
         const neonColors = ['#00f2ff', '#00ff9d', '#ff0055', '#ffee00', '#7a00ff'];
@@ -128,4 +139,14 @@ export default function GhumanteCommunityMap() {
   );
 }
 
-const panelStyle: React.CSSProperties = { position: 'absolute', top: '20px', left: '20px', backgroundColor: 'rgba(0,0,0,0.85)', padding: '20px', borderRadius: '12px', textAlign: 'center', zIndex: 10, border: '1px solid #333' };
+const panelStyle: React.CSSProperties = { 
+  position: 'absolute', 
+  top: '20px', 
+  left: '20px', 
+  backgroundColor: 'rgba(0,0,0,0.85)', 
+  padding: '20px', 
+  borderRadius: '12px', 
+  textAlign: 'center', 
+  zIndex: 10, 
+  border: '1px solid #333' 
+};
